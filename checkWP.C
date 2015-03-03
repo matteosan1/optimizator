@@ -8,11 +8,11 @@
 
 #include <iostream>
 
-int checkWP(int cat) {
+int checkWP(const char* prefix="", int cat=0) {
 
   char a[100];
   VarCut cut[10];
-  sprintf(a, "weights/TMVA_cic_Category%d.root", cat);
+  sprintf(a, "%s_Category%d.root", prefix, cat);
   TFile* cutFile = new TFile(a);
   for (int i=0; i<20; i++) {
     sprintf(a, "cuts_iter%d", i);

@@ -1,0 +1,1 @@
+g++ optimizator.cc  -std=c++0x parser.cc -I `root-config --incdir` -o optimize  -lCore -lRIO -lHist -lTree -lpthread -lm -ldl -lGui -L `root-config --libdir` -lboost_regex -lRooFitCore -g 

@@ -31,12 +31,31 @@ public:
   void setLow(float l) { low = l; };
   void setHigh(float h) { high = h; };
   
+  bool checkTollerance(float cut) {
+    float diff = 0;
+    if (getDir() == "<" or getDir() == "><")
+      diff = fabs(cut - getHigh());
+    
+    if (getDir() == ">")
+      diff = fabs(cut - getLow());
+
+    if (diff/cut < 1e-4) 
+      return false;
+    else
+      return true;
+  }
+
   void setLimit(float cut) {
     if (getDir() == "<")
       setHigh(cut);
     
     if (getDir() == ">")
       setLow(cut);
+
+    if (getDir() == "><") {
+      setHigh(cut);
+      setLow(-cut);
+    }
   }
   
   std::string getCutString() {
@@ -46,6 +65,9 @@ public:
 
     if (getDir() == ">")
       sel << getName() << ">" << getLow(); 
+    
+    if (getDir() == "><")
+      sel << getName() << ">" << getLow() << "&&" << getName() << "<" << getHigh(); 
 
     return sel.str();
   }
@@ -69,10 +91,11 @@ bool is_file_exist(const char *fileName) {
   return infile.good();
 }
 
-Double_t* ComputeIntegral(TH1F* h, Bool_t direction=true) {
+void ComputeIntegral(TH1F* h, double* fIntegral, Bool_t direction=true) {
+  
   Int_t nbins  = h->GetNbinsX();
 
-  Double_t* fIntegral = new Double_t[nbins + 2];
+  //Double_t* fIntegral = new Double_t[nbins + 2];
   Int_t ibin = 0; 
   fIntegral[ibin] = 0;
 
@@ -85,7 +108,7 @@ Double_t* ComputeIntegral(TH1F* h, Bool_t direction=true) {
     //   - Normalize integral to 1
     if (fIntegral[nbins] == 0) {
       Error("ComputeIntegral", "Integral = zero"); 
-      return 0;
+      return;
     }
 
     for (Int_t bin=1; bin <= nbins; ++bin)  
@@ -103,7 +126,7 @@ Double_t* ComputeIntegral(TH1F* h, Bool_t direction=true) {
     //   - Normalize integral to 1
     if (fIntegral[0] == 0) {
       Error("ComputeIntegral", "Integral = zero"); 
-      return 0;
+      return;
     }
 
     for (Int_t bin=nbins; bin >=0; --bin)  {
@@ -113,7 +136,7 @@ Double_t* ComputeIntegral(TH1F* h, Bool_t direction=true) {
     fIntegral[0] = h->GetEntries();
   }
   
-  return fIntegral;
+  //return fIntegral;
 }
 
 Long64_t BinarySearch(Long64_t n, const double *array, double value) {
@@ -132,7 +155,8 @@ Int_t GetQuantiles(TH1F* h, Int_t nprobSum, Double_t *q, const Double_t *probSum
   const Int_t nbins = h->GetXaxis()->GetNbins();
 
   if (direction) { // cut <
-    double* fIntegral = ComputeIntegral(h);//h->ComputeIntegral();
+    Double_t fIntegral[h->GetNbinsX()+ 2];
+    ComputeIntegral(h, fIntegral);//h->ComputeIntegral();
     //double* fIntegral = h->GetIntegral();
     //fIntegral[nbins] = signalEntries;
 
@@ -146,7 +170,8 @@ Int_t GetQuantiles(TH1F* h, Int_t nprobSum, Double_t *q, const Double_t *probSum
     }
   } else {
     //h->ComputeIntegral();
-    double* fIntegral = ComputeIntegral(h, false);//h->GetIntegral();
+    Double_t fIntegral[h->GetNbinsX()+ 2];
+    ComputeIntegral(h, fIntegral, false);//h->GetIntegral();
     //double* fIntegral = h->GetIntegral();
 
     for (i = 0; i < nq; i++) {
@@ -170,7 +195,8 @@ void getVariables(std::vector<Variable>& variables, std::map<std::string, std::s
   std::vector<std::string> stringValues;
   boost::split(stringValues, buf, boost::is_any_of(","));
   
-  for (unsigned int i=0; i<stringValues.size(); i+=5) {
+  std::cout << "INPUT VARIABLES:" << std::endl;
+  for (unsigned int i=0; i<stringValues.size(); i+=5) {    
     std::vector<std::string> strs;
     std::vector<float> limits;
     getVar(i, stringValues, limits, strs);
@@ -178,6 +204,9 @@ void getVariables(std::vector<Variable>& variables, std::map<std::string, std::s
     Variable v(strs[0]);
     v.setVar(strs[1], limits[0], limits[1], strs[2]);
     variables.push_back(v);
+
+    if (v.getType() == "v")
+      std::cout << v.getName() << std::endl;
   }
 }
 	   
@@ -190,39 +219,52 @@ std::pair<float, float> makeHistos(RooDataSet* sig, RooDataSet* bkg, Variable v,
     const RooArgSet* set = sig->get(i);
     RooRealVar* var = (RooRealVar*)set->find(v.getName().c_str());
     RooRealVar* w = (RooRealVar*)set->find(weightVar.c_str());
+
+    float val = var->getVal();
+    if (v.getDir() == "><")
+      val = fabs(val);
+
     if (w != 0)
-      hsig->Fill(var->getVal(), w->getVal());
+      hsig->Fill(val, w->getVal());
     else
-      hsig->Fill(var->getVal());
+      hsig->Fill(val);
   }
 
   for (unsigned int i=0; i<bkg->numEntries(); i++) {
     const RooArgSet* set = bkg->get(i);
     RooRealVar* var = (RooRealVar*)set->find(v.getName().c_str());
     RooRealVar* w = (RooRealVar*)set->find(weightVar.c_str());
+
+    float val = var->getVal();
+    if (v.getDir() == "><")
+      val = fabs(val);
+
     if (w != 0)
-      hbkg->Fill(var->getVal(), w->getVal()); 
+      hbkg->Fill(val, w->getVal()); 
     else     
-      hbkg->Fill(var->getVal());
+      hbkg->Fill(val);
   }
-  
+    
   //TFile* out = new TFile("out.root", "recreate");
   //hsig->Write();
   //hbkg->Write();
   //out->Close();
-    
+
+  int bin;
+  float sob;
   double q[1];
   double p[1];
   p[0]= target;
-  if (v.getDir() == "<") 
+  if (v.getDir() == "<" or v.getDir() == "><") {
     GetQuantiles(hsig, 1, q, p, 1);
-  else if (v.getDir() == ">")
+    bin = hsig->FindBin(q[0]);
+    sob = hsig->Integral(0, bin)/hbkg->Integral(0, bin);
+  }
+  else if (v.getDir() == ">") {
     GetQuantiles(hsig, 1, q, p, 0);
-
-  hsig->Divide(hbkg);
-  //
-  int bin = hsig->FindBin(q[0]);
-  float sob = hsig->GetBinContent(bin);
+    bin = hsig->FindBin(q[0]);
+    sob = hsig->Integral(bin, binning)/hbkg->Integral(bin, binning);
+  }
   
   delete hsig;
   delete hbkg;
@@ -250,6 +292,7 @@ int main(int argc, char** argv) {
   RooDataSet* sigDataSet, *bkgDataSet;
   std::string preselCut;
   std::string outputFile = getString(values, "outputFile");
+  std::vector<float> efficiencyRange = getVfloat(values, "efficiencyRange");
   binning = getUint(values, "binning");
 
   if (!is_file_exist(outputFile.c_str())) { 
@@ -294,6 +337,7 @@ int main(int argc, char** argv) {
     bkgDataSet = (RooDataSet*)w->data("bkgdata");
     sigDataSet = (RooDataSet*)w->data("sigdata");
     out->Close();
+    delete out;
   }
 
   // ADD PRELIMINARY STEP TO MOVE ALL VARS TO 100% EFFICIENCY POINT
@@ -308,8 +352,9 @@ int main(int argc, char** argv) {
   std::ofstream myfile;
   myfile.open("results.txt", ios::out);
   
-  float oldTarget = 1.;
-  for (float t=1.; t>.50; t-=.005) {
+  float oldTarget = efficiencyRange[0];
+  std::cout << efficiencyRange[0] << " " << efficiencyRange[1] << " " << efficiencyRange[2] << std::endl;
+  for (float t=efficiencyRange[0]; t>efficiencyRange[1]; t-=efficiencyRange[2]) {
     std::cout << "ITERATION: " << t << std::endl;
     float realTarget = t/oldTarget;
     
@@ -322,9 +367,11 @@ int main(int argc, char** argv) {
 	std::pair<float, float> result = makeHistos(sigDataSet, bkgDataSet, variables[v], realTarget, weightVar); 
 	std::cout << variables[v].getName() << " " << result.first << " " << result.second << std::endl;
 	if (result.first > highestSOB) {
-	  highestSOB = result.first;
-	  maxVar = variables[v].getName();
-	  maxCut = result.second;
+	  if (variables[v].checkTollerance(result.second)) {	    
+	    highestSOB = result.first;
+	    maxVar = variables[v].getName();
+	    maxCut = result.second;
+	  }
 	}
       }
     }
@@ -333,11 +380,12 @@ int main(int argc, char** argv) {
     std::ostringstream new_selection; 
     if (maxVar == "") {
       std::cerr << "WARNING: no improvement found." << std::endl;
-      return 0;
+      //return 0;
     } else {
       for (unsigned int v=0; v<variables.size(); v++) {
 	if (variables[v].getName() == maxVar) {
 	  variables[v].setLimit(maxCut);
+	  std::cout << "Chosen: " << variables[v].getName() << " Eff: " << t << " SoB: " << highestSOB << std::endl;;	  
 	  myfile << "Chosen: " << variables[v].getName() << " Eff: " << t << " SoB: " << highestSOB << "\n";	  
 	}    
 
@@ -349,24 +397,32 @@ int main(int argc, char** argv) {
       }
 
       myfile << new_selection.str() << "\n";
-    }
-      
-    // PRUNING SIGNAL AND BACKGROUND 
-    RooDataSet* newSig = (RooDataSet*)sigDataSet->reduce(new_selection.str().c_str());
-    RooDataSet* newBkg = (RooDataSet*)bkgDataSet->reduce(new_selection.str().c_str());
     
-    sigDataSet = (RooDataSet*)newSig->Clone();
-    bkgDataSet = (RooDataSet*)newBkg->Clone();
-
-    delete newSig;
-    delete newBkg;
-
+      
+      // PRUNING SIGNAL AND BACKGROUND 
+      RooDataSet* newSig = (RooDataSet*)sigDataSet->reduce(new_selection.str().c_str());
+      RooDataSet* newBkg = (RooDataSet*)bkgDataSet->reduce(new_selection.str().c_str());
+      
+      delete sigDataSet;
+      delete bkgDataSet;
+      
+      sigDataSet = newSig;//(RooDataSet*)newSig->Clone();
+      bkgDataSet = newBkg;//(RooDataSet*)newBkg->Clone();
+      
+      //delete newSig;
+      //delete newBkg;
+      myfile.flush();
+    }
+    
     oldTarget = t;
     // FILL POSSIBLE CONTROL PLOTS
     //g1 = ROOT.TGraph(len(x), x, y)
     //
     //g1.Draw("AP")    
   }
+
+  delete sigDataSet;
+  delete bkgDataSet;
 
   myfile.close();
 }

@@ -12,10 +12,19 @@
 #include <vector>
 #include <array>
 #include <iostream>
+#include <math.h>
 
 #include "parser.h"
 
 static int binning=5000;
+
+double round_to_digits(double value, int digits) {
+  if (value == 0.0) // otherwise it will return 'nan' due to the log10() of zero
+    return 0.0;
+
+  double factor = pow(10.0, digits - ceil(log10(fabs(value))));
+  return round(value * factor) / factor;   
+}
 
 class Variable {
 public:
@@ -39,7 +48,7 @@ public:
     if (getDir() == ">")
       diff = fabs(cut - getLow());
 
-    if (diff/cut < 1e-4) 
+    if (diff/cut < 1e-5) 
       return false;
     else
       return true;
@@ -67,7 +76,21 @@ public:
       sel << getName() << ">" << getLow(); 
     
     if (getDir() == "><")
-      sel << getName() << ">" << getLow() << "&&" << getName() << "<" << getHigh(); 
+      sel << "abs(" << getName() << ")<" << getHigh(); 
+
+    return sel.str();
+  }
+
+  std::string getRoundedCutString() {
+    std::ostringstream sel;
+    if (getDir() == "<")
+      sel << getName() << "<"  << round_to_digits(getHigh(), 4); 
+
+    if (getDir() == ">")
+      sel << getName() << ">" << round_to_digits(getLow(), 4); 
+    
+    if (getDir() == "><")
+      sel << "abs(" << getName() << ")<" << round_to_digits(getHigh(), 4); 
 
     return sel.str();
   }
@@ -273,8 +296,13 @@ std::pair<float, float> makeHistos(RooDataSet* sig, RooDataSet* bkg, Variable v,
 
 int main(int argc, char** argv) {
   
+  if (argc != 2) {
+    std::cerr << "You need to specify the configuration file." << std::endl;
+    return 1;
+  }
+
   // read the configuration file and book histograms 
-  std::map<std::string, std::string> values = parseConfigFile("config.cfg");
+  std::map<std::string, std::string> values = parseConfigFile(argv[1]);
 
   // get list of variables to use + weight 
   std::vector<Variable> variables;
@@ -340,13 +368,13 @@ int main(int argc, char** argv) {
     delete out;
   }
 
-  // ADD PRELIMINARY STEP TO MOVE ALL VARS TO 100% EFFICIENCY POINT
-  for (unsigned int v=0; v<variables.size(); v++) {
-    if (variables[v].getType() == "v") {
-      std::pair<float, float> result = makeHistos(sigDataSet, bkgDataSet, variables[v], 1., weightVar);
-      variables[v].setLimit(result.second);
-    }
-  } 
+  //// ADD PRELIMINARY STEP TO MOVE ALL VARS TO 100% EFFICIENCY POINT
+  //for (unsigned int v=0; v<variables.size(); v++) {
+  //  if (variables[v].getType() == "v") {
+  //    std::pair<float, float> result = makeHistos(sigDataSet, bkgDataSet, variables[v], 1., weightVar);
+  //    variables[v].setLimit(result.second);
+  //  }
+  //} 
 
   // MAIN LOOP OVER EFF TARGETS
   std::ofstream myfile;
@@ -355,6 +383,15 @@ int main(int argc, char** argv) {
   float oldTarget = efficiencyRange[0];
   std::cout << efficiencyRange[0] << " " << efficiencyRange[1] << " " << efficiencyRange[2] << std::endl;
   for (float t=efficiencyRange[0]; t>efficiencyRange[1]; t-=efficiencyRange[2]) {
+    
+    // ADD PRELIMINARY STEP TO MOVE ALL VARS TO 100% EFFICIENCY POINT
+    for (unsigned int v=0; v<variables.size(); v++) {
+      if (variables[v].getType() == "v") {
+	std::pair<float, float> result = makeHistos(sigDataSet, bkgDataSet, variables[v], 1., weightVar);
+	variables[v].setLimit(result.second);
+      }
+    }
+
     std::cout << "ITERATION: " << t << std::endl;
     float realTarget = t/oldTarget;
     
@@ -377,7 +414,7 @@ int main(int argc, char** argv) {
     }
     
     myfile << "+++++++++++++++++++++++++++++\n";
-    std::ostringstream new_selection; 
+    std::ostringstream new_selection, rounded_selection; 
     if (maxVar == "") {
       std::cerr << "WARNING: no improvement found." << std::endl;
       //return 0;
@@ -390,13 +427,16 @@ int main(int argc, char** argv) {
 	}    
 
 	if (variables[v].getType() == "v") {
-	  if (v > 0) 
+	  if (v > 0) {
 	    new_selection << " && ";
+	    rounded_selection << " && ";
+	  }
 	  new_selection << variables[v].getCutString();
+	  rounded_selection << variables[v].getRoundedCutString();
 	}
       }
 
-      myfile << new_selection.str() << "\n";
+      myfile << rounded_selection.str() << "\n";
     
       
       // PRUNING SIGNAL AND BACKGROUND 
@@ -406,11 +446,9 @@ int main(int argc, char** argv) {
       delete sigDataSet;
       delete bkgDataSet;
       
-      sigDataSet = newSig;//(RooDataSet*)newSig->Clone();
-      bkgDataSet = newBkg;//(RooDataSet*)newBkg->Clone();
-      
-      //delete newSig;
-      //delete newBkg;
+      sigDataSet = newSig;
+      bkgDataSet = newBkg;
+
       myfile.flush();
     }
     
